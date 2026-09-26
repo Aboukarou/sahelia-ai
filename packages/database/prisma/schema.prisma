@@ -20,23 +20,36 @@ enum MembershipRole {
 }
 
 model User {
-  id           String       @id @default(cuid())
-  email        String       @unique
-  passwordHash String
-  name         String
-  role         UserRole     @default(CLIENT)
-  memberships Membership[]
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  id                  String           @id @default(cuid())
+  email               String           @unique
+  passwordHash        String
+  name                String
+  role                UserRole         @default(CLIENT)
+  isActive            Boolean          @default(true)
+  failedLoginAttempts Int              @default(0)
+  lockedUntil         DateTime?
+  passwordChangedAt   DateTime         @default(now())
+  memberships         Membership[]
+  sessions            RefreshSession[]
+  auditLogs           AuditLog[]       @relation("AuditActor")
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  @@index([isActive])
 }
 
 model Business {
-  id          String       @id @default(cuid())
+  id          String           @id @default(cuid())
   name        String
-  slug        String       @unique
+  slug        String           @unique
+  isActive    Boolean          @default(true)
   memberships Membership[]
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  sessions    RefreshSession[]
+  auditLogs   AuditLog[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([isActive])
 }
 
 model Membership {
@@ -44,10 +57,51 @@ model Membership {
   userId     String
   businessId String
   role       MembershipRole @default(MEMBER)
+  isActive   Boolean        @default(true)
   user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   business   Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
   createdAt  DateTime       @default(now())
 
   @@unique([userId, businessId])
-  @@index([businessId])
+  @@index([businessId, isActive])
+  @@index([userId, isActive])
+}
+
+model RefreshSession {
+  id         String    @id @default(cuid())
+  userId     String
+  businessId String?
+  tokenHash  String    @unique
+  userAgent  String?
+  ipAddress  String?
+  expiresAt  DateTime
+  lastUsedAt DateTime  @default(now())
+  revokedAt  DateTime?
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business   Business? @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([userId, revokedAt])
+  @@index([businessId, revokedAt])
+  @@index([expiresAt])
+}
+
+model AuditLog {
+  id         String    @id @default(cuid())
+  actorId    String?
+  businessId String?
+  action     String
+  entityType String
+  entityId   String?
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  actor      User?     @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  business   Business? @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  createdAt  DateTime  @default(now())
+
+  @@index([businessId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
 }

@@ -10,10 +10,13 @@
     "build": "turbo run build",
     "dev": "turbo run dev --parallel",
     "lint": "turbo run lint",
+    "test": "turbo run test",
     "typecheck": "turbo run typecheck",
     "format:check": "prettier --check .",
     "db:generate": "pnpm --filter @sahelia/database prisma:generate",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm build"
+    "db:validate": "pnpm --filter @sahelia/database exec prisma validate",
+    "db:migrate:deploy": "pnpm --filter @sahelia/database exec prisma migrate deploy",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },
   "devDependencies": {
     "prettier": "3.6.2",
