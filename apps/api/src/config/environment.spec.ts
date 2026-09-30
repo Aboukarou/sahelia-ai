@@ -8,8 +8,43 @@ describe("validateEnvironment", () => {
   };
 
   it("accepte une configuration de sécurité complète", () => {
-    expect(validateEnvironment(validEnvironment)).toBe(validEnvironment);
+    expect(validateEnvironment(validEnvironment)).toEqual({
+      ...validEnvironment,
+      JWT_ACCESS_TTL_SECONDS: 900,
+      JWT_REFRESH_TTL_DAYS: 30,
+      AUTH_MAX_LOGIN_ATTEMPTS: 5,
+      AUTH_LOCK_MINUTES: 15,
+    });
   });
+
+  it("convertit les paramètres numériques fournis en chaînes", () => {
+    const result = validateEnvironment({
+      ...validEnvironment,
+      JWT_ACCESS_TTL_SECONDS: "1200",
+      JWT_REFRESH_TTL_DAYS: "7",
+      AUTH_MAX_LOGIN_ATTEMPTS: "3",
+      AUTH_LOCK_MINUTES: "10",
+    });
+
+    expect(result.JWT_ACCESS_TTL_SECONDS).toBe(1200);
+    expect(result.JWT_REFRESH_TTL_DAYS).toBe(7);
+    expect(result.AUTH_MAX_LOGIN_ATTEMPTS).toBe(3);
+    expect(result.AUTH_LOCK_MINUTES).toBe(10);
+  });
+
+  it.each(["", "0", "-1", "1.5", "abc"])(
+    "refuse une durée JWT invalide : %p",
+    (value) => {
+      expect(() =>
+        validateEnvironment({
+          ...validEnvironment,
+          JWT_ACCESS_TTL_SECONDS: value,
+        }),
+      ).toThrow(
+        "JWT_ACCESS_TTL_SECONDS doit être un entier strictement positif.",
+      );
+    },
+  );
 
   it("refuse une base de données absente", () => {
     expect(() =>

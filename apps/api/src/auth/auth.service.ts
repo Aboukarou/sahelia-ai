@@ -53,6 +53,7 @@ export class AuthService {
     const existingUser = await this.prisma.user.findUnique({
       where: { email },
     });
+
     if (existingUser) {
       throw new ConflictException(
         "Un compte existe déjà avec cette adresse e-mail.",
@@ -70,6 +71,7 @@ export class AuthService {
             slug: await this.availableSlug(transaction, baseSlug),
           },
         });
+
         const createdUser = await transaction.user.create({
           data: {
             email,
@@ -82,6 +84,7 @@ export class AuthService {
           },
           ...userWithMembership,
         });
+
         await transaction.auditLog.create({
           data: {
             action: "AUTH_REGISTERED",
@@ -93,6 +96,7 @@ export class AuthService {
             userAgent: metadata.userAgent,
           },
         });
+
         return createdUser;
       });
 
@@ -104,6 +108,7 @@ export class AuthService {
       ) {
         throw new ConflictException("Le compte ou l’entreprise existe déjà.");
       }
+
       throw error;
     }
   }
@@ -134,7 +139,9 @@ export class AuthService {
       where: { id: user.id },
       data: { failedLoginAttempts: 0, lockedUntil: null },
     });
+
     await this.writeAudit("AUTH_LOGIN_SUCCEEDED", user, metadata);
+
     return this.createSession(user, metadata);
   }
 
@@ -160,6 +167,7 @@ export class AuthService {
     }
 
     const result = await this.issueTokens(session.user, session.id);
+
     await this.prisma.refreshSession.update({
       where: { id: session.id },
       data: {
@@ -169,6 +177,7 @@ export class AuthService {
         userAgent: metadata.userAgent,
       },
     });
+
     return {
       ...result,
       refreshExpiresAt: session.expiresAt,
@@ -181,16 +190,19 @@ export class AuthService {
     metadata: RequestMetadata,
   ): Promise<void> {
     if (!refreshToken) return;
+
     try {
       const payload = await this.verifyRefreshToken(refreshToken);
       const session = await this.prisma.refreshSession.findUnique({
         where: { id: payload.sid },
       });
+
       if (session && !session.revokedAt) {
         await this.prisma.refreshSession.update({
           where: { id: session.id },
           data: { revokedAt: new Date() },
         });
+
         await this.prisma.auditLog.create({
           data: {
             action: "AUTH_LOGOUT",
@@ -233,9 +245,11 @@ export class AuthService {
       where: { id: userId },
       ...userWithMembership,
     });
+
     if (!user || !user.isActive) {
       throw new UnauthorizedException("Utilisateur indisponible.");
     }
+
     return this.toProfile(user);
   }
 
@@ -255,11 +269,14 @@ export class AuthService {
         userAgent: metadata.userAgent,
       },
     });
+
     const tokens = await this.issueTokens(user, session.id);
+
     await this.prisma.refreshSession.update({
       where: { id: session.id },
       data: { tokenHash: this.hashToken(tokens.refreshToken) },
     });
+
     return { ...tokens, refreshExpiresAt, profile: this.toProfile(user) };
   }
 
@@ -273,11 +290,13 @@ export class AuthService {
       membershipRole: membership?.role ?? null,
       sessionId,
     };
+
     const refreshPayload: RefreshPayload = {
       sub: user.id,
       sid: sessionId,
       type: "refresh",
     };
+
     const [accessToken, refreshToken] = await Promise.all([
       this.jwt.signAsync(accessPayload, {
         secret: this.requiredConfig("JWT_ACCESS_SECRET"),
@@ -287,9 +306,9 @@ export class AuthService {
       this.jwt.signAsync(refreshPayload, {
         secret: this.requiredConfig("JWT_REFRESH_SECRET"),
         expiresIn: this.refreshDays() * 86_400,
-        subject: user.id,
       }),
     ]);
+
     return { accessToken, refreshToken };
   }
 
@@ -298,8 +317,11 @@ export class AuthService {
       const payload = await this.jwt.verifyAsync<RefreshPayload>(token, {
         secret: this.requiredConfig("JWT_REFRESH_SECRET"),
       });
-      if (payload.type !== "refresh" || !payload.sub || !payload.sid)
+
+      if (payload.type !== "refresh" || !payload.sub || !payload.sid) {
         throw new Error();
+      }
+
       return payload;
     } catch {
       throw new UnauthorizedException("Session invalide ou expirée.");
@@ -314,6 +336,7 @@ export class AuthService {
     const nextAttempts = user.failedLoginAttempts + 1;
     const shouldLock = nextAttempts >= maxAttempts;
     const lockMinutes = this.config.get<number>("AUTH_LOCK_MINUTES", 15);
+
     await this.prisma.$transaction([
       this.prisma.user.update({
         where: { id: user.id },
@@ -357,6 +380,7 @@ export class AuthService {
 
   private toProfile(user: UserWithMembership): AuthProfile {
     const membership = user.memberships[0];
+
     return {
       id: user.id,
       email: user.email,
@@ -378,13 +402,16 @@ export class AuthService {
     baseSlug: string,
   ): Promise<string> {
     const base = baseSlug || "entreprise";
+
     for (let suffix = 0; suffix < 100; suffix += 1) {
       const candidate = suffix === 0 ? base : `${base}-${suffix + 1}`;
       const exists = await transaction.business.findUnique({
         where: { slug: candidate },
       });
+
       if (!exists) return candidate;
     }
+
     return `${base}-${randomUUID().slice(0, 8)}`;
   }
 

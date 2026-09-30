@@ -1,6 +1,6 @@
 packages:
-  - "apps/*"
-  - "packages/*"
+  - apps/*
+  - packages/*
 
 allowBuilds:
   "@nestjs/core": true
@@ -9,3 +9,11 @@ allowBuilds:
   prisma: true
   sharp: true
   unrs-resolver: true
+
+onlyBuiltDependencies:
+  - "@nestjs/core"
+  - "@prisma/client"
+  - "@prisma/engines"
+  - prisma
+  - sharp
+  - unrs-resolver
