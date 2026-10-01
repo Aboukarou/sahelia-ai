@@ -35,6 +35,29 @@ export interface BusinessProfile {
   canEdit: boolean;
 }
 
+export interface BusinessMember {
+  id: string;
+  role: "OWNER" | "ADMIN" | "MEMBER";
+  isActive: boolean;
+  createdAt: string;
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    isActive: boolean;
+  };
+}
+
+export interface BusinessMembersResponse {
+  items: BusinessMember[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
 interface AuthResponse {
   accessToken: string;
   profile: AuthProfile;
@@ -59,6 +82,10 @@ interface AuthContextValue {
   logout: (allSessions?: boolean) => Promise<void>;
   getBusiness: () => Promise<BusinessProfile>;
   updateBusiness: (name: string) => Promise<BusinessProfile>;
+  getBusinessMembers: (
+    page?: number,
+    limit?: number,
+  ) => Promise<BusinessMembersResponse>;
 }
 
 const API_URL = (
@@ -352,6 +379,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [authenticatedRequest],
   );
 
+  const getBusinessMembers = useCallback(
+    (
+      page = 1,
+      limit = 20,
+    ): Promise<BusinessMembersResponse> => {
+      if (!Number.isInteger(page) || page < 1 || page > 100000) {
+        return Promise.reject(new Error("Le numéro de page est invalide."));
+      }
+
+      if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+        return Promise.reject(new Error("La taille de page est invalide."));
+      }
+
+      const query = new URLSearchParams({
+        page: String(page),
+        limit: String(limit),
+      });
+
+      return authenticatedRequest<BusinessMembersResponse>(
+        `/business/current/members?${query.toString()}`,
+        { method: "GET" },
+      );
+    },
+    [authenticatedRequest],
+  );
+
   const logout = useCallback(
     async (allSessions = false) => {
       if (allSessions) {
@@ -379,6 +432,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       getBusiness,
       updateBusiness,
+      getBusinessMembers,
     }),
     [
       profile,
@@ -390,6 +444,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       getBusiness,
       updateBusiness,
+      getBusinessMembers,
     ],
   );
 

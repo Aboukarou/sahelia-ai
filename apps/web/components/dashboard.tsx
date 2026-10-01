@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useAuth } from "./auth-provider";
 import { BusinessPanel } from "./business-panel";
+import { BusinessMembersPanel } from "./business-members-panel";
 
 const accountRoles = {
   SUPER_ADMIN: "Super administrateur",
@@ -89,6 +90,12 @@ export function Dashboard() {
     );
   }
 
+  const canViewMembers =
+    profile.business !== null &&
+    (profile.role === "SUPER_ADMIN" ||
+      profile.business.membershipRole === "OWNER" ||
+      profile.business.membershipRole === "ADMIN");
+
   return (
     <div className="dashboard-shell">
       <header className="site-header">
@@ -156,6 +163,12 @@ export function Dashboard() {
             </section>
           )}
         </div>
+
+        {canViewMembers && profile.business && (
+          <BusinessMembersPanel
+            key={`${profile.id}:${profile.business.id}:${profile.business.membershipRole}:${profile.role}`}
+          />
+        )}
 
         <section
           className="panel session-panel"
