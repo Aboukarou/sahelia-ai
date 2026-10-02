@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "./auth-provider";
 import { BusinessPanel } from "./business-panel";
 import { BusinessMembersPanel } from "./business-members-panel";
+import { AccountSessionsPanel } from "./account-sessions-panel";
 
 const accountRoles = {
   SUPER_ADMIN: "Super administrateur",
@@ -169,6 +170,8 @@ export function Dashboard() {
             key={`${profile.id}:${profile.business.id}:${profile.business.membershipRole}:${profile.role}`}
           />
         )}
+
+        <AccountSessionsPanel key={profile.id} disabled={pending} />
 
         <section
           className="panel session-panel"

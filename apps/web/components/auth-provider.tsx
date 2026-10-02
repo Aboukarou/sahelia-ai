@@ -48,14 +48,32 @@ export interface BusinessMember {
   };
 }
 
+interface Pagination {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+
 export interface BusinessMembersResponse {
   items: BusinessMember[];
-  pagination: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-  };
+  pagination: Pagination;
+}
+
+export interface AccountSession {
+  id: string;
+  businessId: string | null;
+  userAgent: string | null;
+  ipAddress: string | null;
+  createdAt: string;
+  lastUsedAt: string;
+  expiresAt: string;
+  isCurrent: boolean;
+}
+
+export interface AccountSessionsResponse {
+  items: AccountSession[];
+  pagination: Pagination;
 }
 
 interface AuthResponse {
@@ -86,6 +104,11 @@ interface AuthContextValue {
     page?: number,
     limit?: number,
   ) => Promise<BusinessMembersResponse>;
+  getSessions: (
+    page?: number,
+    limit?: number,
+  ) => Promise<AccountSessionsResponse>;
+  revokeSession: (sessionId: string) => Promise<void>;
 }
 
 const API_URL = (
@@ -171,6 +194,21 @@ function refreshSession(): Promise<AuthResponse> {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Une erreur est survenue.";
+}
+
+function paginationQuery(page: number, limit: number): string {
+  if (!Number.isInteger(page) || page < 1 || page > 100000) {
+    throw new Error("Le numéro de page est invalide.");
+  }
+
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    throw new Error("La taille de page est invalide.");
+  }
+
+  return new URLSearchParams({
+    page: String(page),
+    limit: String(limit),
+  }).toString();
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -380,26 +418,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const getBusinessMembers = useCallback(
-    (
-      page = 1,
-      limit = 20,
-    ): Promise<BusinessMembersResponse> => {
-      if (!Number.isInteger(page) || page < 1 || page > 100000) {
-        return Promise.reject(new Error("Le numéro de page est invalide."));
-      }
-
-      if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
-        return Promise.reject(new Error("La taille de page est invalide."));
-      }
-
-      const query = new URLSearchParams({
-        page: String(page),
-        limit: String(limit),
-      });
-
-      return authenticatedRequest<BusinessMembersResponse>(
-        `/business/current/members?${query.toString()}`,
+    async (page = 1, limit = 20): Promise<BusinessMembersResponse> =>
+      authenticatedRequest<BusinessMembersResponse>(
+        `/business/current/members?${paginationQuery(page, limit)}`,
         { method: "GET" },
+      ),
+    [authenticatedRequest],
+  );
+
+  const getSessions = useCallback(
+    async (page = 1, limit = 20): Promise<AccountSessionsResponse> =>
+      authenticatedRequest<AccountSessionsResponse>(
+        `/auth/sessions?${paginationQuery(page, limit)}`,
+        { method: "GET" },
+      ),
+    [authenticatedRequest],
+  );
+
+  const revokeSession = useCallback(
+    async (sessionId: string): Promise<void> => {
+      if (!sessionId.trim()) {
+        throw new Error("L’identifiant de session est invalide.");
+      }
+
+      await authenticatedRequest<void>(
+        `/auth/sessions/${encodeURIComponent(sessionId)}`,
+        { method: "DELETE" },
       );
     },
     [authenticatedRequest],
@@ -433,6 +477,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       getBusiness,
       updateBusiness,
       getBusinessMembers,
+      getSessions,
+      revokeSession,
     }),
     [
       profile,
@@ -445,6 +491,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       getBusiness,
       updateBusiness,
       getBusinessMembers,
+      getSessions,
+      revokeSession,
     ],
   );
 
