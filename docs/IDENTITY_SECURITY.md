@@ -1,31 +1,40 @@
 # Identité et sécurité multi-tenant
 
-## Garanties de cette étape
+## Périmètre actuel
 
-- Toute inscription crée atomiquement un utilisateur `CLIENT`, une entreprise et un membership `OWNER`.
+Le socle couvre l’inscription, la connexion, le renouvellement des tokens, les déconnexions, les informations de l’entreprise, la consultation des membres et les sessions du compte.
+
+## Comportements implémentés
+
+- L’inscription crée atomiquement un utilisateur CLIENT, une entreprise et un membership OWNER. L’ouverture de la session intervient ensuite.
 - Les mots de passe sont hachés avec bcrypt, facteur 12.
 - Les access tokens expirent après 15 minutes par défaut.
-- Les refresh tokens sont placés dans un cookie `HttpOnly` et renouvelés à chaque refresh.
-- Seul le condensat SHA-256 du refresh token est stocké en base.
-- Les sessions peuvent être révoquées individuellement ou globalement.
+- Le refresh token est transmis dans un cookie HttpOnly.
+- Seul son condensat SHA-256 est stocké en base.
+- Le renouvellement conserve l’identifiant et la date de création de la session, et actualise `lastUsedAt`.
+- Le renouvellement refuse une session révoquée, expirée, appartenant à un autre utilisateur ou dont le condensat du token ne correspond pas.
+- L’authentification JWT vérifie en base la session et l’état actuel de l’utilisateur.
+- Un access token encore valide cryptographiquement est refusé si sa session est révoquée ou expirée.
 - Cinq connexions échouées verrouillent le compte pendant 15 minutes par défaut.
-- Les connexions, échecs, verrouillages et déconnexions sont journalisés.
-- Le guard multi-tenant vérifie le membership actif et l'état de l'entreprise côté serveur.
-- `SUPER_ADMIN` est le seul rôle global pouvant cibler une entreprise sans membership.
+- Les événements d’authentification et les révocations individuelles sont journalisés.
+- Les accès métier vérifient les permissions et l’état de l’entreprise côté serveur.
 
-## Configuration obligatoire
+Le cookie utilise `SameSite=Lax`, le chemin `/api/auth` et `Secure` en production.
 
-Copier `.env.example` vers `.env`, puis remplacer les secrets d'exemple par deux valeurs aléatoires différentes d'au moins 32 caractères.
+## Configuration
 
-```bash
-pnpm db:generate
-pnpm db:migrate:deploy
-pnpm check
+Copier `.env.example` vers `.env`, puis renseigner PostgreSQL et remplacer les deux secrets JWT d’exemple par des valeurs aléatoires différentes d’au moins 32 caractères.
+
+Ne pas versionner les secrets ni transmettre les tokens ou cookies dans les comptes rendus de tests.
+
+```powershell
+pnpm.cmd db:generate
+pnpm.cmd db:migrate:deploy
 ```
 
-## Contrat des routes
+## Inscription et connexion
 
-### `POST /api/auth/register`
+### POST /api/auth/register
 
 ```json
 {
@@ -36,7 +45,7 @@ pnpm check
 }
 ```
 
-### `POST /api/auth/login`
+### POST /api/auth/login
 
 ```json
 {
@@ -45,8 +54,109 @@ pnpm check
 }
 ```
 
-L'inscription, la connexion et le refresh retournent un access token et un profil public. Le refresh token reste exclusivement dans le cookie sécurisé.
+L’inscription, la connexion et le renouvellement retournent un access token et un profil public. Le refresh token est transmis par le cookie HttpOnly.
 
-## Étape suivante
+## Membres de l’entreprise
 
-Construire les écrans d'inscription et de connexion Enterprise Gold V2, puis exécuter un test E2E réel contre PostgreSQL avant d'ouvrir le développement du dashboard.
+### GET /api/business/current/members?page=1&limit=20
+
+La lecture est limitée à l’entreprise sélectionnée côté serveur.
+
+Le service autorise :
+
+- Un membership actif OWNER ou ADMIN
+- Le rôle global SUPER_ADMIN, sous réserve du passage des contrôles d’authentification et d’accès en amont
+
+Le rôle ADMIN du compte ne remplace pas un membership autorisé.
+
+Le service refuse une entreprise absente ou désactivée. Les résultats incluent les memberships inactifs et l’état du compte utilisateur.
+
+Chaque élément contient :
+
+- `id`, `role`, `isActive`, `createdAt`
+- `user.id`, `user.name`, `user.email`, `user.isActive`
+
+Aucune route de gestion des membres n’est ajoutée à cette étape.
+
+## Sessions du compte
+
+### GET /api/auth/sessions?page=1&limit=20
+
+La liste contient uniquement les sessions du compte authentifié qui ne sont pas révoquées et dont l’expiration est strictement future.
+
+Chaque élément contient :
+
+- `id`, `businessId`
+- `userAgent`, `ipAddress`
+- `createdAt`, `lastUsedAt`, `expiresAt`
+- `isCurrent`
+
+`isCurrent` compare l’identifiant de la session à celui du token utilisé pour la requête.
+
+La liste est personnelle : même SUPER_ADMIN ne reçoit pas les sessions des autres utilisateurs.
+
+### DELETE /api/auth/sessions/:sessionId
+
+Cette route révoque uniquement une autre session du compte authentifié.
+
+- La session courante est refusée avec HTTP 400.
+- Une session absente du compte est refusée avec HTTP 404.
+- Une session déjà révoquée ou expirée ne provoque pas de nouvelle écriture.
+- Une révocation réussie retourne HTTP 204.
+- La révocation et l’événement AUTH_SESSION_REVOKED sont écrits dans une transaction.
+
+Pour fermer la session courante, utiliser `POST /api/auth/logout`. Pour fermer toutes les sessions du compte, utiliser `POST /api/auth/logout-all`.
+
+## Pagination
+
+Les listes de membres et de sessions acceptent :
+
+- `page` : entier de 1 à 100000, valeur par défaut 1
+- `limit` : entier de 1 à 100, valeur par défaut 20
+
+Elles retournent :
+
+```json
+{
+  "items": [],
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 0,
+    "totalPages": 0
+  }
+}
+```
+
+Une page au-delà de la dernière peut retourner une liste vide. Le frontend adapte les commandes aux bornes de la pagination.
+
+## Vérifications réalisées
+
+Le dernier passage complet fourni des tests API contient 7 suites et 64 tests réussis, dont :
+
+- 15 tests du service de consultation des membres
+- 16 tests de la stratégie JWT
+- 14 tests du service des sessions
+
+Les vérifications manuelles ont confirmé :
+
+1. Une session de test pouvait consulter `/api/auth/me`.
+2. Sa révocation retournait HTTP 204.
+3. Son access token était ensuite refusé avec HTTP 401.
+4. Son refresh token était ensuite refusé avec HTTP 401.
+5. Une session privée distincte pouvait être révoquée depuis le dashboard.
+6. Après rechargement, cette fenêtre privée revenait à la connexion.
+7. La fenêtre habituelle conservait son accès au dashboard.
+
+Les fenêtres du test doivent utiliser des sessions différentes. Deux onglets partageant le même cookie ne constituent pas deux sessions indépendantes.
+
+## Vérifications restantes
+
+- Automatiser les parcours E2E contre PostgreSQL
+- Vérifier l’isolation entre plusieurs comptes et entreprises en intégration
+- Tester les renouvellements concurrents et leur interaction avec une révocation
+- Vérifier le rollback réel de la transaction si l’écriture d’audit échoue
+- Valider les cookies, les origines autorisées et HTTPS en environnement de production
+- Compléter les contrôles d’accessibilité et les essais sur appareils réels
+
+Le socle n’est pas déclaré prêt pour la production sur la seule base des tests unitaires et des vérifications manuelles actuelles.
