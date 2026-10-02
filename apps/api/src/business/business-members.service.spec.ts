@@ -208,10 +208,7 @@ describe("BusinessMembersService", () => {
     membershipFindUnique.mockResolvedValue(null);
 
     await expect(
-      service.listCurrent(
-        { ...user, role: UserRole.SUPER_ADMIN },
-        query(),
-      ),
+      service.listCurrent({ ...user, role: UserRole.SUPER_ADMIN }, query()),
     ).resolves.toMatchObject({
       items: [member],
       pagination: { total: 1 },
@@ -230,10 +227,7 @@ describe("BusinessMembersService", () => {
     });
 
     await expect(
-      service.listCurrent(
-        { ...user, role: UserRole.SUPER_ADMIN },
-        query(),
-      ),
+      service.listCurrent({ ...user, role: UserRole.SUPER_ADMIN }, query()),
     ).rejects.toBeInstanceOf(ForbiddenException);
 
     expectNoMemberRead();
@@ -242,9 +236,7 @@ describe("BusinessMembersService", () => {
   it("limite les lectures à l’entreprise sélectionnée et calcule la pagination", async () => {
     membershipCount.mockResolvedValue(45);
 
-    await expect(
-      service.listCurrent(user, query(2, 20)),
-    ).resolves.toEqual({
+    await expect(service.listCurrent(user, query(2, 20))).resolves.toEqual({
       items: [member],
       pagination: {
         page: 2,
@@ -284,12 +276,9 @@ describe("BusinessMembersService", () => {
       take: 20,
     });
 
-    expect(runTransaction).toHaveBeenCalledWith(
-      expect.any(Function),
-      {
-        isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
-      },
-    );
+    expect(runTransaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+    });
   });
 
   it("retourne zéro page lorsque l’entreprise ne contient aucun membre", async () => {
@@ -311,9 +300,7 @@ describe("BusinessMembersService", () => {
     membershipCount.mockResolvedValue(1);
     membershipFindMany.mockResolvedValue([]);
 
-    await expect(
-      service.listCurrent(user, query(2, 20)),
-    ).resolves.toEqual({
+    await expect(service.listCurrent(user, query(2, 20))).resolves.toEqual({
       items: [],
       pagination: {
         page: 2,

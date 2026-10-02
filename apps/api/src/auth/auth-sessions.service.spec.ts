@@ -1,7 +1,4 @@
-import {
-  BadRequestException,
-  NotFoundException,
-} from "@nestjs/common";
+import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { MembershipRole, Prisma, UserRole } from "@sahelia/database";
 import type { PrismaService } from "../database/prisma.service";
 import { AuthSessionsService } from "./auth-sessions.service";
@@ -144,12 +141,9 @@ describe("AuthSessionsService", () => {
       take: 20,
     });
 
-    expect(runTransaction).toHaveBeenCalledWith(
-      expect.any(Function),
-      {
-        isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
-      },
-    );
+    expect(runTransaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+    });
   });
 
   it("calcule la pagination de la deuxième page", async () => {
@@ -205,10 +199,7 @@ describe("AuthSessionsService", () => {
   });
 
   it("conserve le filtre utilisateur pour un super administrateur", async () => {
-    await service.listMine(
-      { ...user, role: UserRole.SUPER_ADMIN },
-      query(),
-    );
+    await service.listMine({ ...user, role: UserRole.SUPER_ADMIN }, query());
 
     expect(sessionCount).toHaveBeenCalledWith({
       where: {
@@ -326,24 +317,24 @@ describe("AuthSessionsService", () => {
     expect(auditCreate).not.toHaveBeenCalled();
   });
 
-  it.each([
-    new Date("2026-10-01T11:59:59Z"),
-    new Date("2026-10-01T12:00:00Z"),
-  ])("ne révoque pas une session expirée à %s", async (expiry) => {
-    sessionFindFirst.mockResolvedValue({
-      id: "session-other",
-      businessId: "business-2",
-      revokedAt: null,
-      expiresAt: expiry,
-    });
+  it.each([new Date("2026-10-01T11:59:59Z"), new Date("2026-10-01T12:00:00Z")])(
+    "ne révoque pas une session expirée à %s",
+    async (expiry) => {
+      sessionFindFirst.mockResolvedValue({
+        id: "session-other",
+        businessId: "business-2",
+        revokedAt: null,
+        expiresAt: expiry,
+      });
 
-    await expect(
-      service.revokeOther(user, "session-other", metadata),
-    ).resolves.toBeUndefined();
+      await expect(
+        service.revokeOther(user, "session-other", metadata),
+      ).resolves.toBeUndefined();
 
-    expect(sessionUpdateMany).not.toHaveBeenCalled();
-    expect(auditCreate).not.toHaveBeenCalled();
-  });
+      expect(sessionUpdateMany).not.toHaveBeenCalled();
+      expect(auditCreate).not.toHaveBeenCalled();
+    },
+  );
 
   it("ne crée pas de doublon d’audit si une autre requête a révoqué la session", async () => {
     sessionUpdateMany.mockResolvedValue({ count: 0 });

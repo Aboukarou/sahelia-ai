@@ -104,9 +104,9 @@ describe("JwtStrategy", () => {
     ["identifiant session vide", { ...payload, sessionId: "" }],
     ["identifiant entreprise vide", { ...payload, businessId: "" }],
   ])("refuse un payload avec %s", async (_label, invalidPayload) => {
-    await expect(
-      strategy.validate(invalidPayload),
-    ).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(strategy.validate(invalidPayload)).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
 
     expect(sessionFindUnique).not.toHaveBeenCalled();
     expect(userFindUnique).not.toHaveBeenCalled();
@@ -154,23 +154,23 @@ describe("JwtStrategy", () => {
     expect(membershipFindUnique).not.toHaveBeenCalled();
   });
 
-  it.each([
-    new Date("2026-10-01T11:59:59Z"),
-    new Date("2026-10-01T12:00:00Z"),
-  ])("refuse une session expirée à %s", async (expiresAt) => {
-    sessionFindUnique.mockResolvedValue({
-      userId: "user-1",
-      revokedAt: null,
-      expiresAt,
-    });
+  it.each([new Date("2026-10-01T11:59:59Z"), new Date("2026-10-01T12:00:00Z")])(
+    "refuse une session expirée à %s",
+    async (expiresAt) => {
+      sessionFindUnique.mockResolvedValue({
+        userId: "user-1",
+        revokedAt: null,
+        expiresAt,
+      });
 
-    await expect(strategy.validate(payload)).rejects.toBeInstanceOf(
-      UnauthorizedException,
-    );
+      await expect(strategy.validate(payload)).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
 
-    expect(userFindUnique).not.toHaveBeenCalled();
-    expect(membershipFindUnique).not.toHaveBeenCalled();
-  });
+      expect(userFindUnique).not.toHaveBeenCalled();
+      expect(membershipFindUnique).not.toHaveBeenCalled();
+    },
+  );
 
   it("refuse un utilisateur introuvable", async () => {
     userFindUnique.mockResolvedValue(null);

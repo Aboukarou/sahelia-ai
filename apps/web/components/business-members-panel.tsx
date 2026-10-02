@@ -1,10 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  useAuth,
-  type BusinessMembersResponse,
-} from "./auth-provider";
+import { useAuth, type BusinessMembersResponse } from "./auth-provider";
 import styles from "./business-members-panel.module.css";
 
 const membershipRoles = {
@@ -43,10 +40,7 @@ export function BusinessMembersPanel() {
           result.pagination.totalPages > 0 &&
           result.pagination.page > result.pagination.totalPages
         ) {
-          const lastPage = Math.min(
-            result.pagination.totalPages,
-            MAX_PAGE,
-          );
+          const lastPage = Math.min(result.pagination.totalPages, MAX_PAGE);
 
           requestedPage.current = lastPage;
           result = await getBusinessMembers(lastPage, PAGE_SIZE);
@@ -103,9 +97,7 @@ export function BusinessMembersPanel() {
       : 0;
 
   const lastItem =
-    data && data.items.length > 0
-      ? firstItem + data.items.length - 1
-      : 0;
+    data && data.items.length > 0 ? firstItem + data.items.length - 1 : 0;
 
   function changePage(page: number) {
     if (loading || error) return;

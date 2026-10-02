@@ -44,7 +44,9 @@ function displayDate(value: string): string {
   }).format(date);
 }
 
-export function AccountSessionsPanel({ disabled = false }: {
+export function AccountSessionsPanel({
+  disabled = false,
+}: {
   disabled?: boolean;
 }) {
   const { getSessions, revokeSession } = useAuth();
@@ -113,12 +115,7 @@ export function AccountSessionsPanel({ disabled = false }: {
   }, [load]);
 
   async function handleRevoke(session: AccountSession) {
-    if (
-      disabled ||
-      loading ||
-      mutationInFlight.current ||
-      session.isCurrent
-    ) {
+    if (disabled || loading || mutationInFlight.current || session.isCurrent) {
       return;
     }
 
@@ -318,8 +315,8 @@ export function AccountSessionsPanel({ disabled = false }: {
 
                   {session.isCurrent ? (
                     <p className={`muted ${styles.currentHelp}`}>
-                      Pour fermer cette session, utilisez « Se déconnecter »
-                      en haut de la page.
+                      Pour fermer cette session, utilisez « Se déconnecter » en
+                      haut de la page.
                     </p>
                   ) : (
                     <div className={styles.actions}>
@@ -341,7 +338,10 @@ export function AccountSessionsPanel({ disabled = false }: {
             </ul>
           )}
 
-          <nav className={styles.pagination} aria-label="Pagination des sessions">
+          <nav
+            className={styles.pagination}
+            aria-label="Pagination des sessions"
+          >
             <p className="muted">
               {data.pagination.totalPages === 0
                 ? "Aucune page"
