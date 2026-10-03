@@ -132,11 +132,21 @@ Une page au-delà de la dernière peut retourner une liste vide. Le frontend ada
 
 ## Vérifications réalisées
 
+### Tests automatisés et CI
+
 Le dernier passage complet fourni des tests API contient 7 suites et 64 tests réussis, dont :
 
 - 15 tests du service de consultation des membres
 - 16 tests de la stratégie JWT
 - 14 tests du service des sessions
+
+Le contrôle complet local `pnpm.cmd check` a réussi : formatage, lint, types, tests et builds.
+
+La CI GitHub numéro 12 a également réussi pour le commit `cf2e223`, avec le job `validate` et l’étape `pnpm check`.
+
+Ces résultats ne constituent pas une exécution automatisée des parcours HTTP contre PostgreSQL.
+
+### Révocation d’une session
 
 Les vérifications manuelles ont confirmé :
 
@@ -150,10 +160,36 @@ Les vérifications manuelles ont confirmé :
 
 Les fenêtres du test doivent utiliser des sessions différentes. Deux onglets partageant le même cookie ne constituent pas deux sessions indépendantes.
 
+### Isolation entre deux comptes et entreprises — 3 octobre 2026
+
+Les scénarios ont été exécutés manuellement avec PowerShell contre l’API locale et sa base PostgreSQL.
+
+Deux comptes de test A et B ont été inscrits avec des adresses uniques et des cookies séparés. Chaque compte possédait une entreprise distincte et un membership OWNER.
+
+Les résultats observés sont les suivants :
+
+| Scénario                                                   | Résultat observé                                                                                   |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Consultation de l’entreprise avec le compte A              | L’identifiant correspondait à l’entreprise de A                                                    |
+| Consultation de l’entreprise avec le compte B              | L’identifiant correspondait à l’entreprise de B                                                    |
+| Consultation des membres avec A                            | Un seul résultat : l’utilisateur A, OWNER, avec membership et compte actifs                        |
+| Consultation des membres avec B                            | Un seul résultat : l’utilisateur B, OWNER, avec membership et compte actifs                        |
+| Modification du nom de l’entreprise A                      | Le nouveau nom était retourné puis conservé lors d’une nouvelle lecture ; le slug restait inchangé |
+| Lecture de B après la modification de A                    | L’identifiant, le nom, le slug et `updatedAt` de B restaient inchangés                             |
+| Consultation des sessions avec A et B                      | Chaque compte recevait une seule session, identifiée comme courante et associée à son entreprise   |
+| Comparaison des sessions                                   | Les identifiants des sessions A et B étaient distincts                                             |
+| Tentative de révocation de la session B avec le compte A   | HTTP 404 ; B pouvait encore consulter son profil et retrouver sa session courante                  |
+| Tentative de révocation de la session A avec le compte B   | HTTP 404 ; A pouvait encore consulter son profil et retrouver sa session courante                  |
+| Déconnexion finale de A et B avec leurs cookies respectifs | HTTP 204 pour chaque compte                                                                        |
+
+Les comptes et entreprises de test restent en base. Aucune suppression de données n’a été effectuée.
+
+Cette vérification couvre les scénarios exécutés avec deux propriétaires d’entreprises distinctes. Elle ne couvre pas tous les rôles, les memberships multiples, les entreprises désactivées ni les accès concurrents.
+
 ## Vérifications restantes
 
 - Automatiser les parcours E2E contre PostgreSQL
-- Vérifier l’isolation entre plusieurs comptes et entreprises en intégration
+- Automatiser les scénarios d’isolation entre comptes et entreprises et étendre leur couverture aux rôles et états d’accès
 - Tester les renouvellements concurrents et leur interaction avec une révocation
 - Vérifier le rollback réel de la transaction si l’écriture d’audit échoue
 - Valider les cookies, les origines autorisées et HTTPS en environnement de production
