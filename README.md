@@ -99,7 +99,100 @@ Des vérifications manuelles ont également confirmé :
 - La révocation depuis le dashboard d’une session privée distincte, puis son retour à la connexion après rechargement
 - Le maintien de la session habituelle après cette révocation
 
-Ces résultats ne constituent pas une validation complète de production ni une suite E2E automatisée.
+Le 4 octobre 2026, le contrôle complet local et la CI du commit `e92a6aa` ont réussi avec 64 tests unitaires et sept tests HTTP contre PostgreSQL. Les tests HTTP utilisent une base dédiée et ne constituent pas des tests du frontend dans un navigateur.
+
+Ces résultats ne constituent pas une validation complète de production.
+
+## Tests HTTP avec PostgreSQL
+
+La suite `apps/api/test/tenant-isolation.e2e-spec.ts` démarre une instance Nest sur un port disponible. Il n’est pas nécessaire de démarrer l’API habituelle ni le frontend.
+
+Elle vérifie sept scénarios : séparation des entreprises, séparation des membres, modification de A sans changement de B, séparation des sessions, refus des révocations croisées dans les deux sens, puis déconnexion et refus des access tokens et refresh tokens.
+
+### Préparer la base locale
+
+Créer une base dédiée nommée exactement `sahelia_ai_test`. Sous Windows, adapter le chemin de `psql.exe` à l’installation PostgreSQL :
+
+```powershell
+& "C:\Program Files\PostgreSQL\18\bin\psql.exe" -h localhost -p 5432 -U postgres -d postgres -W -v ON_ERROR_STOP=1 -c "CREATE DATABASE sahelia_ai_test;"
+```
+
+Si la base existe déjà, ne pas la supprimer. Vérifier la connexion :
+
+```powershell
+& "C:\Program Files\PostgreSQL\18\bin\psql.exe" -h localhost -p 5432 -U postgres -d sahelia_ai_test -W -v ON_ERROR_STOP=1 -c "SELECT current_database(), current_user;"
+```
+
+Depuis la racine du monorepo, préparer l’URL dans la fenêtre PowerShell utilisée pour les tests :
+
+```powershell
+$testDbPassword = Read-Host "Mot de passe PostgreSQL postgres" -AsSecureString
+$testDbCredential = [System.Net.NetworkCredential]::new("", $testDbPassword)
+
+try {
+    $testDbEncodedPassword = [uri]::EscapeDataString($testDbCredential.Password)
+    $env:TEST_DATABASE_URL = "postgresql://postgres:${testDbEncodedPassword}@localhost:5432/sahelia_ai_test?schema=public"
+} finally {
+    Remove-Variable testDbPassword, testDbCredential, testDbEncodedPassword -ErrorAction SilentlyContinue
+}
+```
+
+Ne pas afficher ni versionner cette URL : elle contient le mot de passe. La variable reste disponible uniquement dans cette fenêtre et les processus qu’elle lance.
+
+Appliquer les migrations en ciblant explicitement la base de test, sans modifier `.env` :
+
+```powershell
+$previousDatabaseUrl = $env:DATABASE_URL
+
+try {
+    if (-not $env:TEST_DATABASE_URL) {
+        throw "TEST_DATABASE_URL est obligatoire."
+    }
+    $testDbTarget = [uri]$env:TEST_DATABASE_URL
+    if ($testDbTarget.AbsolutePath -ne "/sahelia_ai_test") {
+        throw "La base ciblée doit être sahelia_ai_test."
+    }
+
+    $env:DATABASE_URL = $env:TEST_DATABASE_URL
+    pnpm.cmd db:migrate:deploy
+    if ($LASTEXITCODE -ne 0) {
+        throw "L’application des migrations a échoué."
+    }
+
+    pnpm.cmd --filter @sahelia/database exec prisma migrate status
+    if ($LASTEXITCODE -ne 0) {
+        throw "La vérification des migrations a échoué."
+    }
+} finally {
+    $env:DATABASE_URL = $previousDatabaseUrl
+}
+```
+
+### Exécuter les tests
+
+Dans cette même fenêtre, depuis la racine :
+
+```powershell
+pnpm.cmd db:generate
+pnpm.cmd --filter @sahelia/database build
+pnpm.cmd --filter @sahelia/api test:e2e
+```
+
+Arrêter la procédure si une commande échoue. Le résultat attendu de Jest est une suite et sept tests réussis.
+
+`pnpm.cmd check` exécute le formatage, le lint, les types, les tests unitaires et les builds. Les tests HTTP sont lancés séparément par `test:e2e` et ne sont pas mis en cache par Turborepo.
+
+La préparation Jest exige une URL PostgreSQL locale ciblant `sahelia_ai_test`, avec le schéma `public`. Elle génère des secrets JWT temporaires. La suite vérifie aussi le nom de la base connectée avant de créer les comptes.
+
+Chaque exécution crée deux comptes avec des adresses uniques. Le nettoyage supprime leurs audits, sessions, memberships, utilisateurs et entreprises. Il ne réinitialise pas la base entière. Une interruption brutale peut laisser des données de test.
+
+### Exécution dans GitHub Actions
+
+Le workflow démarre un service PostgreSQL 18 temporaire, génère le client Prisma, applique les migrations, exécute `pnpm check`, puis `pnpm --filter @sahelia/api test:e2e`.
+
+Les identifiants du service PostgreSQL inscrits dans le workflow sont propres à ce conteneur temporaire. Les secrets JWT des tests sont générés au démarrage.
+
+Validation observée le 4 octobre 2026 : [CI réussie du commit e92a6aa](https://github.com/Aboukarou/sahelia-ai/actions/runs/37183780167).
 
 ## Règles du projet
 

@@ -142,9 +142,31 @@ Le dernier passage complet fourni des tests API contient 7 suites et 64 tests r�
 
 Le contrôle complet local `pnpm.cmd check` a réussi : formatage, lint, types, tests et builds.
 
-La CI GitHub numéro 12 a également réussi pour le commit `cf2e223`, avec le job `validate` et l’étape `pnpm check`.
+La CI GitHub du commit `e92a6aa` a réussi le 4 octobre 2026 : migrations PostgreSQL, contrôle complet avec 64 tests unitaires, puis sept tests HTTP.
 
-Ces résultats ne constituent pas une exécution automatisée des parcours HTTP contre PostgreSQL.
+[Consulter cette exécution CI](https://github.com/Aboukarou/sahelia-ai/actions/runs/37183780167).
+
+### Tests HTTP automatisés — 4 octobre 2026
+
+La suite `apps/api/test/tenant-isolation.e2e-spec.ts` a réussi lors de plusieurs exécutions locales et dans GitHub Actions. Elle utilise la vraie application Nest, ses contrôles de validation et d’authentification, ainsi qu’une base PostgreSQL dédiée.
+
+Les sept tests vérifient :
+
+1. Chaque compte reçoit sa propre entreprise.
+2. Chaque compte reçoit uniquement le membre de son entreprise.
+3. Modifier le nom de A conserve son slug et laisse B inchangée.
+4. Les listes de sessions sont séparées et identifient la session courante.
+5. A reçoit HTTP 404 en tentant de révoquer la session de B ; B reste utilisable.
+6. B reçoit HTTP 404 en tentant de révoquer la session de A ; A reste utilisable.
+7. Les déconnexions retournent HTTP 204 ; les access tokens et refresh tokens sont ensuite refusés avec HTTP 401.
+
+La configuration exige `TEST_DATABASE_URL` ciblant la base locale `sahelia_ai_test`, schéma `public`. Les secrets JWT sont temporaires. La suite vérifie le nom de la base connectée avant les inscriptions et démarre Nest sur un port disponible.
+
+Le nettoyage est limité aux données des comptes créés pour cette exécution. Une interruption brutale peut laisser des données résiduelles. Aucune réinitialisation globale de la base n’est effectuée.
+
+La commande dédiée est `pnpm.cmd --filter @sahelia/api test:e2e`. Elle est distincte de `pnpm.cmd check`. La procédure de création de la base, de configuration de l’URL et de migration est documentée dans le [README](../README.md#tests-http-avec-postgresql).
+
+Cette suite couvre les requêtes HTTP et PostgreSQL ; elle ne teste pas les interactions du frontend dans un navigateur.
 
 ### Révocation d’une session
 
@@ -188,11 +210,11 @@ Cette vérification couvre les scénarios exécutés avec deux propriétaires d�
 
 ## Vérifications restantes
 
-- Automatiser les parcours E2E contre PostgreSQL
-- Automatiser les scénarios d’isolation entre comptes et entreprises et étendre leur couverture aux rôles et états d’accès
+- Étendre les tests HTTP aux rôles, aux memberships multiples et aux états d’accès
+- Automatiser les parcours du frontend dans un navigateur
 - Tester les renouvellements concurrents et leur interaction avec une révocation
 - Vérifier le rollback réel de la transaction si l’écriture d’audit échoue
 - Valider les cookies, les origines autorisées et HTTPS en environnement de production
 - Compléter les contrôles d’accessibilité et les essais sur appareils réels
 
-Le socle n’est pas déclaré prêt pour la production sur la seule base des tests unitaires et des vérifications manuelles actuelles.
+Le socle n’est pas déclaré prêt pour la production sur la seule base des tests unitaires, des sept tests HTTP et des vérifications manuelles actuelles.
