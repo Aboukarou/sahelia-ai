@@ -328,6 +328,207 @@ describe("Isolation HTTP entre comptes et entreprises", () => {
     },
   );
 
+  function fixture() {
+    if (!prisma || !databaseVerified || !accountA.profile.business) {
+      throw new Error("Les données de test ne sont pas initialisées.");
+    }
+    return {
+      client: prisma,
+      userId: accountA.profile.id,
+      businessId: accountA.profile.business.id,
+    };
+  }
+
+  it("autorise un administrateur d’entreprise à consulter les membres et modifier le nom", async () => {
+    const { client, userId, businessId } = fixture();
+    const before = await read<BusinessResponse>("/business/current", accountA);
+    try {
+      await client.membership.update({
+        where: { userId_businessId: { userId, businessId } },
+        data: { role: "ADMIN" },
+      });
+      const business = await read<
+        BusinessResponse & { canEdit: boolean; membershipRole: string }
+      >("/business/current", accountA);
+      expect(business).toMatchObject({
+        membershipRole: "ADMIN",
+        canEdit: true,
+      });
+      const members = await read<Paginated<MemberResponse>>(
+        "/business/current/members?page=1&limit=20",
+        accountA,
+      );
+      expect(members.items).toHaveLength(1);
+      expect(members.items[0]).toMatchObject({
+        role: "ADMIN",
+        user: { id: userId },
+      });
+      const name = `E2E administrateur ${runId}`;
+      const response = await request("/business/current", accountA, "PATCH", {
+        name,
+      });
+      expect(response.status).toBe(200);
+      expect(
+        await read<BusinessResponse>("/business/current", accountA),
+      ).toMatchObject({ id: businessId, name });
+    } finally {
+      await client.membership.update({
+        where: { userId_businessId: { userId, businessId } },
+        data: { role: "OWNER" },
+      });
+      await client.business.update({
+        where: { id: businessId },
+        data: { name: before.name },
+      });
+    }
+  });
+
+  it("autorise un membre à lire son entreprise mais refuse les membres et la modification", async () => {
+    const { client, userId, businessId } = fixture();
+    const before = await read<BusinessResponse>("/business/current", accountA);
+    try {
+      await client.membership.update({
+        where: { userId_businessId: { userId, businessId } },
+        data: { role: "MEMBER" },
+      });
+      const business = await read<
+        BusinessResponse & { canEdit: boolean; membershipRole: string }
+      >("/business/current", accountA);
+      expect(business).toMatchObject({
+        id: businessId,
+        membershipRole: "MEMBER",
+        canEdit: false,
+      });
+      expect(
+        (await request("/business/current/members?page=1&limit=20", accountA))
+          .status,
+      ).toBe(403);
+      expect(
+        (
+          await request("/business/current", accountA, "PATCH", {
+            name: "Modification interdite",
+          })
+        ).status,
+      ).toBe(403);
+      expect(
+        await client.business.findUnique({
+          where: { id: businessId },
+          select: { name: true },
+        }),
+      ).toEqual({ name: before.name });
+    } finally {
+      await client.membership.update({
+        where: { userId_businessId: { userId, businessId } },
+        data: { role: "OWNER" },
+      });
+      await client.business.update({
+        where: { id: businessId },
+        data: { name: before.name },
+      });
+    }
+  });
+
+  it("retire immédiatement les permissions OWNER avec le même access token après passage à MEMBER", async () => {
+    const { client, userId, businessId } = fixture();
+    const token = accountA.accessToken;
+    const before = await read<BusinessResponse>("/business/current", accountA);
+    expect((await request("/business/current/members", accountA)).status).toBe(
+      200,
+    );
+    expect(
+      (
+        await request("/business/current", accountA, "PATCH", {
+          name: before.name,
+        })
+      ).status,
+    ).toBe(200);
+    try {
+      await client.membership.update({
+        where: { userId_businessId: { userId, businessId } },
+        data: { role: "MEMBER" },
+      });
+      expect(accountA.accessToken).toBe(token);
+      expect(
+        (await request("/business/current/members", accountA)).status,
+      ).toBe(403);
+      expect(
+        (
+          await request("/business/current", accountA, "PATCH", {
+            name: "Ancien propriétaire",
+          })
+        ).status,
+      ).toBe(403);
+      expect(
+        await client.business.findUnique({
+          where: { id: businessId },
+          select: { name: true },
+        }),
+      ).toEqual({ name: before.name });
+    } finally {
+      await client.membership.update({
+        where: { userId_businessId: { userId, businessId } },
+        data: { role: "OWNER" },
+      });
+      await client.business.update({
+        where: { id: businessId },
+        data: { name: before.name },
+      });
+    }
+    expect((await request("/business/current/members", accountA)).status).toBe(
+      200,
+    );
+  });
+
+  it.each(["adhésion", "entreprise", "utilisateur"] as const)(
+    "refuse le token existant après désactivation : %s",
+    async (target) => {
+      const { client, userId, businessId } = fixture();
+      const token = accountA.accessToken;
+      expect((await request("/auth/me", accountA)).status).toBe(200);
+      async function setActive(isActive: boolean): Promise<void> {
+        if (target === "adhésion") {
+          await client.membership.update({
+            where: { userId_businessId: { userId, businessId } },
+            data: { isActive },
+          });
+        } else if (target === "entreprise") {
+          await client.business.update({
+            where: { id: businessId },
+            data: { isActive },
+          });
+        } else {
+          await client.user.update({
+            where: { id: userId },
+            data: { isActive },
+          });
+        }
+      }
+      try {
+        await setActive(false);
+        expect(accountA.accessToken).toBe(token);
+        for (const path of [
+          "/auth/me",
+          "/auth/sessions",
+          "/business/current",
+          "/business/current/members",
+        ]) {
+          expect((await request(path, accountA)).status).toBe(401);
+        }
+        expect(
+          (
+            await request("/business/current", accountA, "PATCH", {
+              name: "Accès désactivé",
+            })
+          ).status,
+        ).toBe(401);
+        expect((await request("/auth/me", accountB)).status).toBe(200);
+      } finally {
+        await setActive(true);
+      }
+      expect((await request("/auth/me", accountA)).status).toBe(200);
+    },
+  );
+
   it("déconnecte les comptes et refuse ensuite leurs tokens", async () => {
     for (const account of [accountA, accountB]) {
       const logout = await request(
