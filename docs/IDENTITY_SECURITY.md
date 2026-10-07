@@ -144,13 +144,15 @@ Le contrôle complet local `pnpm.cmd check` a réussi : formatage, lint, types, 
 
 La CI GitHub du commit `e92a6aa` a réussi le 4 octobre 2026 : migrations PostgreSQL, contrôle complet avec 64 tests unitaires, puis sept tests HTTP.
 
-[Consulter cette exécution CI](https://github.com/Aboukarou/sahelia-ai/actions/runs/37183780167).
+Le 6 octobre 2026, les vérifications TypeScript et le lint API ont réussi localement, suivis des 13 tests HTTP. La CI du commit `fee61ec` a également réussi, avec `pnpm check` puis les tests HTTP PostgreSQL.
 
-### Tests HTTP automatisés — 4 octobre 2026
+[Consulter la dernière exécution CI validée](https://github.com/Aboukarou/sahelia-ai/actions/runs/37437095377).
+
+### Tests HTTP automatisés — extension validée le 6 octobre 2026
 
 La suite `apps/api/test/tenant-isolation.e2e-spec.ts` a réussi lors de plusieurs exécutions locales et dans GitHub Actions. Elle utilise la vraie application Nest, ses contrôles de validation et d’authentification, ainsi qu’une base PostgreSQL dédiée.
 
-Les sept tests vérifient :
+Les 13 tests vérifient :
 
 1. Chaque compte reçoit sa propre entreprise.
 2. Chaque compte reçoit uniquement le membre de son entreprise.
@@ -159,6 +161,16 @@ Les sept tests vérifient :
 5. A reçoit HTTP 404 en tentant de révoquer la session de B ; B reste utilisable.
 6. B reçoit HTTP 404 en tentant de révoquer la session de A ; A reste utilisable.
 7. Les déconnexions retournent HTTP 204 ; les access tokens et refresh tokens sont ensuite refusés avec HTTP 401.
+8. Un membership ADMIN actif peut consulter les membres et modifier le nom de l’entreprise.
+9. Un membership MEMBER actif peut lire l’entreprise avec `canEdit: false`, mais reçoit HTTP 403 pour la lecture des membres et la modification ; le nom reste inchangé.
+10. Le passage de OWNER à MEMBER retire immédiatement les permissions avec le même access token ; les opérations interdites reçoivent HTTP 403.
+11. Une adhésion désactivée fait refuser le token existant avec HTTP 401.
+12. Une entreprise désactivée fait refuser le token existant avec HTTP 401.
+13. Un utilisateur désactivé fait refuser le token existant avec HTTP 401.
+
+Pour chacun des trois états désactivés, les tests vérifient le refus de `/api/auth/me`, des sessions, de la lecture de l’entreprise, de ses membres et de la modification du nom. Le compte B conserve son accès. Après restauration de l’état actif, le compte A peut de nouveau consulter son profil.
+
+Les mutations de rôle et de statut utilisent Prisma uniquement sur les données de test. Chaque scénario restaure les valeurs modifiées dans un bloc `finally`. Aucun endpoint ni mécanisme de gestion des membres n’est ajouté.
 
 La configuration exige `TEST_DATABASE_URL` ciblant la base locale `sahelia_ai_test`, schéma `public`. Les secrets JWT sont temporaires. La suite vérifie le nom de la base connectée avant les inscriptions et démarre Nest sur un port disponible.
 
@@ -210,11 +222,11 @@ Cette vérification couvre les scénarios exécutés avec deux propriétaires d�
 
 ## Vérifications restantes
 
-- Étendre les tests HTTP aux rôles, aux memberships multiples et aux états d’accès
+- Étendre les tests HTTP aux rôles globaux ADMIN et SUPER_ADMIN, aux memberships multiples et à la sélection explicite d’une entreprise
 - Automatiser les parcours du frontend dans un navigateur
 - Tester les renouvellements concurrents et leur interaction avec une révocation
 - Vérifier le rollback réel de la transaction si l’écriture d’audit échoue
 - Valider les cookies, les origines autorisées et HTTPS en environnement de production
 - Compléter les contrôles d’accessibilité et les essais sur appareils réels
 
-Le socle n’est pas déclaré prêt pour la production sur la seule base des tests unitaires, des sept tests HTTP et des vérifications manuelles actuelles.
+Le socle n’est pas déclaré prêt pour la production sur la seule base des tests unitaires, des 13 tests HTTP et des vérifications manuelles actuelles.

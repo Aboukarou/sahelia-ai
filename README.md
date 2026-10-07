@@ -101,13 +101,23 @@ Des vérifications manuelles ont également confirmé :
 
 Le 4 octobre 2026, le contrôle complet local et la CI du commit `e92a6aa` ont réussi avec 64 tests unitaires et sept tests HTTP contre PostgreSQL. Les tests HTTP utilisent une base dédiée et ne constituent pas des tests du frontend dans un navigateur.
 
+Le 6 octobre 2026, la suite étendue a réussi localement avec 13 tests HTTP. Le lint et les vérifications TypeScript de l’API et des tests E2E ont également réussi. La CI du commit `fee61ec` a ensuite réussi, y compris `pnpm check` et les tests HTTP PostgreSQL.
+
 Ces résultats ne constituent pas une validation complète de production.
 
 ## Tests HTTP avec PostgreSQL
 
 La suite `apps/api/test/tenant-isolation.e2e-spec.ts` démarre une instance Nest sur un port disponible. Il n’est pas nécessaire de démarrer l’API habituelle ni le frontend.
 
-Elle vérifie sept scénarios : séparation des entreprises, séparation des membres, modification de A sans changement de B, séparation des sessions, refus des révocations croisées dans les deux sens, puis déconnexion et refus des access tokens et refresh tokens.
+Elle vérifie 13 scénarios :
+
+- Les sept scénarios d’isolation existants : séparation des entreprises, des membres et des sessions ; modification de A sans changement de B ; refus des révocations croisées dans les deux sens ; déconnexion et refus des access tokens et refresh tokens.
+- Un membership ADMIN peut consulter les membres et modifier le nom de l’entreprise.
+- Un membership MEMBER peut lire l’entreprise, mais reçoit HTTP 403 pour la consultation des membres et la modification du nom.
+- Le passage de OWNER à MEMBER retire immédiatement ces permissions avec le même access token.
+- La désactivation de l’adhésion, de l’entreprise ou de l’utilisateur refuse le token existant avec HTTP 401, dans trois tests distincts.
+
+Les changements de rôle et de statut sont réalisés directement dans les données de test, puis restaurés dans des blocs `finally`. Ils n’ajoutent aucune route de gestion des membres. Les tests de désactivation vérifient aussi que le compte B conserve son accès.
 
 ### Préparer la base locale
 
@@ -178,7 +188,7 @@ pnpm.cmd --filter @sahelia/database build
 pnpm.cmd --filter @sahelia/api test:e2e
 ```
 
-Arrêter la procédure si une commande échoue. Le résultat attendu de Jest est une suite et sept tests réussis.
+Arrêter la procédure si une commande échoue. Le résultat attendu de Jest est une suite et 13 tests réussis.
 
 `pnpm.cmd check` exécute le formatage, le lint, les types, les tests unitaires et les builds. Les tests HTTP sont lancés séparément par `test:e2e` et ne sont pas mis en cache par Turborepo.
 
@@ -192,7 +202,7 @@ Le workflow démarre un service PostgreSQL 18 temporaire, génère le client Pri
 
 Les identifiants du service PostgreSQL inscrits dans le workflow sont propres à ce conteneur temporaire. Les secrets JWT des tests sont générés au démarrage.
 
-Validation observée le 4 octobre 2026 : [CI réussie du commit e92a6aa](https://github.com/Aboukarou/sahelia-ai/actions/runs/37183780167).
+Validation la plus récente observée le 6 octobre 2026 : [CI réussie du commit fee61ec](https://github.com/Aboukarou/sahelia-ai/actions/runs/37437095377).
 
 ## Règles du projet
 
