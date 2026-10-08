@@ -9,7 +9,7 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     services:
       postgres:
@@ -32,16 +32,38 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
       - uses: pnpm/action-setup@v4
         with:
           version: 10.15.1
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20.19.6
           cache: pnpm
+
       - run: pnpm install --frozen-lockfile
+
       - run: pnpm db:generate
+
       - run: pnpm db:migrate:deploy
+
       - run: pnpm check
+
       - name: Tests HTTP avec PostgreSQL
         run: pnpm --filter @sahelia/api test:e2e
+
+      - name: Installation de Chromium et des dépendances système
+        run: pnpm --filter @sahelia/web exec playwright install --with-deps chromium
+
+      - name: Tests navigateur sur ordinateur, tablette et mobile
+        run: pnpm --filter @sahelia/web exec playwright test
+
+      - name: Conservation des diagnostics Playwright
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-diagnostics
+          path: apps/web/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
