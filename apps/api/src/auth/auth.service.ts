@@ -168,15 +168,28 @@ export class AuthService {
 
     const result = await this.issueTokens(session.user, session.id);
 
-    await this.prisma.refreshSession.update({
-      where: { id: session.id },
+    const now = new Date();
+
+    const rotation = await this.prisma.refreshSession.updateMany({
+      where: {
+        id: session.id,
+        userId: payload.sub,
+        tokenHash: this.hashToken(refreshToken),
+        revokedAt: null,
+        expiresAt: { gt: now },
+        user: { isActive: true },
+      },
       data: {
         tokenHash: this.hashToken(result.refreshToken),
-        lastUsedAt: new Date(),
+        lastUsedAt: now,
         ipAddress: metadata.ipAddress,
         userAgent: metadata.userAgent,
       },
     });
+
+    if (rotation.count !== 1) {
+      throw new UnauthorizedException("Session invalide ou expirée.");
+    }
 
     return {
       ...result,
@@ -306,6 +319,7 @@ export class AuthService {
       this.jwt.signAsync(refreshPayload, {
         secret: this.requiredConfig("JWT_REFRESH_SECRET"),
         expiresIn: this.refreshDays() * 86_400,
+        jwtid: randomUUID(),
       }),
     ]);
 
