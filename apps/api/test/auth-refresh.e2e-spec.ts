@@ -1,10 +1,12 @@
 import { ValidationPipe, type INestApplication } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { Test } from "@nestjs/testing";
+import { Prisma } from "@sahelia/database";
 import cookieParser from "cookie-parser";
 import { createHash, randomUUID } from "node:crypto";
 import { AppModule } from "../src/app.module";
-import type { AuthProfile } from "../src/auth/auth.types";
+import { AuthSessionsService } from "../src/auth/auth-sessions.service";
+import type { AuthProfile, RequestUser } from "../src/auth/auth.types";
 import { PrismaService } from "../src/database/prisma.service";
 
 interface AuthResponse {
@@ -80,7 +82,7 @@ describe("Renouvellement HTTP des sessions avec PostgreSQL", () => {
     return createHash("sha256").update(token).digest("hex");
   }
 
-  async function register(): Promise<TestAccount> {
+  async function register(password = randomUUID()): Promise<TestAccount> {
     const index = emails.length;
     const email = `e2e.refresh.${runId}.${index}@example.com`;
     emails.push(email);
@@ -92,7 +94,7 @@ describe("Renouvellement HTTP des sessions avec PostgreSQL", () => {
       undefined,
       {
         email,
-        password: randomUUID(),
+        password,
         name: "Utilisateur renouvellement",
         businessName: `E2E renouvellement ${runId} ${index}`,
       },
@@ -169,15 +171,19 @@ describe("Renouvellement HTTP des sessions avec PostgreSQL", () => {
               ],
             },
           });
+
           await transaction.refreshSession.deleteMany({
             where: { userId: { in: userIds } },
           });
+
           await transaction.membership.deleteMany({
             where: { userId: { in: userIds } },
           });
+
           await transaction.user.deleteMany({
             where: { id: { in: userIds } },
           });
+
           await transaction.business.deleteMany({
             where: { id: { in: businessIds } },
           });
@@ -215,6 +221,7 @@ describe("Renouvellement HTTP des sessions avec PostgreSQL", () => {
       before.lastUsedAt.getTime(),
     );
     expect(after.tokenHash === cookieHash(nextCookie)).toBe(true);
+
     expect(
       await client().refreshSession.count({
         where: { userId: account.profile.id },
@@ -294,14 +301,17 @@ describe("Renouvellement HTTP des sessions avec PostgreSQL", () => {
     const revoked = await client().refreshSession.findFirstOrThrow({
       where: { userId: account.profile.id },
     });
+
     expect(revoked.revokedAt).not.toBeNull();
 
     expect((await request("/auth/refresh", "POST", nextCookie)).status).toBe(
       401,
     );
+
     expect(
       (await request("/auth/refresh", "POST", account.cookie)).status,
     ).toBe(401);
+
     expect(
       (await request("/auth/me", "GET", undefined, renewed.accessToken)).status,
     ).toBe(401);
@@ -365,6 +375,7 @@ describe("Renouvellement HTTP des sessions avec PostgreSQL", () => {
       const revoked = await client().refreshSession.findFirstOrThrow({
         where: { userId: account.profile.id },
       });
+
       expect(revoked.revokedAt).not.toBeNull();
 
       releaseSigning();
@@ -395,5 +406,172 @@ describe("Renouvellement HTTP des sessions avec PostgreSQL", () => {
         signingSpy.mockRestore();
       }
     }
+  });
+
+  it("annule la révocation si l’audit échoue, puis permet une nouvelle tentative", async () => {
+    const password = randomUUID();
+    const emailIndex = emails.length;
+    const owner = await register(password);
+    const email = emails[emailIndex];
+
+    if (!email) {
+      throw new Error("L’adresse du compte de test est absente.");
+    }
+
+    const login = await request("/auth/login", "POST", undefined, undefined, {
+      email,
+      password,
+    });
+
+    expect(login.status).toBe(200);
+
+    const other = (await login.json()) as AuthResponse;
+    const otherCookie = readCookie(login);
+    const database = client();
+
+    const target = await database.refreshSession.findFirstOrThrow({
+      where: {
+        userId: owner.profile.id,
+        tokenHash: cookieHash(otherCookie),
+      },
+    });
+
+    if (!app) {
+      throw new Error("L’application de test n’est pas initialisée.");
+    }
+
+    const jwt = app.get<JwtService>(JwtService);
+    const user = jwt.decode<RequestUser>(owner.accessToken);
+
+    if (!user) {
+      throw new Error("Le token du compte de test est invalide.");
+    }
+
+    expect(user.userId).toBe(owner.profile.id);
+    expect(user.sessionId).not.toBe(target.id);
+    expect(other.profile.id).toBe(owner.profile.id);
+    expect(target.revokedAt).toBeNull();
+
+    expect(
+      (await request("/auth/me", "GET", undefined, owner.accessToken)).status,
+    ).toBe(200);
+
+    expect(
+      (await request("/auth/me", "GET", undefined, other.accessToken)).status,
+    ).toBe(200);
+
+    const auditWhere = {
+      action: "AUTH_SESSION_REVOKED",
+      actorId: owner.profile.id,
+      entityType: "RefreshSession",
+      entityId: target.id,
+    } satisfies Prisma.AuditLogWhereInput;
+
+    expect(await database.auditLog.count({ where: auditWhere })).toBe(0);
+
+    const auditFailure = new Error("Échec d’audit contrôlé pour le test.");
+    let auditAttempted = false;
+    let revocationObservedInsideTransaction = false;
+
+    // La transaction et la révocation utilisent réellement PostgreSQL.
+    // Seule l’écriture d’audit est remplacée par une erreur contrôlée.
+    const transactionAdapter = {
+      $transaction: (
+        operation: (transaction: Prisma.TransactionClient) => Promise<void>,
+      ): Promise<void> =>
+        database.$transaction(async (transaction) => {
+          const auditDelegate = new Proxy(transaction.auditLog, {
+            get(delegate, property, receiver) {
+              if (property === "create") {
+                return async (): Promise<never> => {
+                  auditAttempted = true;
+
+                  const inside =
+                    await transaction.refreshSession.findUniqueOrThrow({
+                      where: { id: target.id },
+                    });
+
+                  revocationObservedInsideTransaction =
+                    inside.revokedAt !== null;
+
+                  throw auditFailure;
+                };
+              }
+
+              return Reflect.get(delegate, property, receiver) as unknown;
+            },
+          });
+
+          const transactionWithFailingAudit = new Proxy(transaction, {
+            get(delegate, property, receiver) {
+              if (property === "auditLog") {
+                return auditDelegate;
+              }
+
+              return Reflect.get(delegate, property, receiver) as unknown;
+            },
+          });
+
+          await operation(transactionWithFailingAudit);
+        }),
+    };
+
+    // Cet adaptateur expose uniquement la transaction utilisée par revokeOther.
+    const serviceWithFailingAudit = new AuthSessionsService(
+      transactionAdapter as unknown as PrismaService,
+    );
+
+    await expect(
+      serviceWithFailingAudit.revokeOther(user, target.id, {
+        ipAddress: "127.0.0.1",
+        userAgent: "E2E rollback",
+      }),
+    ).rejects.toBe(auditFailure);
+
+    expect(auditAttempted).toBe(true);
+    expect(revocationObservedInsideTransaction).toBe(true);
+
+    const afterFailure = await database.refreshSession.findUniqueOrThrow({
+      where: { id: target.id },
+    });
+
+    expect(afterFailure.revokedAt).toBeNull();
+    expect(afterFailure.lastUsedAt).toEqual(target.lastUsedAt);
+    expect(afterFailure.expiresAt).toEqual(target.expiresAt);
+    expect(afterFailure.tokenHash === target.tokenHash).toBe(true);
+    expect(await database.auditLog.count({ where: auditWhere })).toBe(0);
+
+    expect(
+      (await request("/auth/me", "GET", undefined, other.accessToken)).status,
+    ).toBe(200);
+
+    // Nouvelle tentative via HTTP avec le service normal.
+    const retry = await request(
+      `/auth/sessions/${target.id}`,
+      "DELETE",
+      undefined,
+      owner.accessToken,
+    );
+
+    expect(retry.status).toBe(204);
+
+    const afterSuccess = await database.refreshSession.findUniqueOrThrow({
+      where: { id: target.id },
+    });
+
+    expect(afterSuccess.revokedAt).not.toBeNull();
+    expect(await database.auditLog.count({ where: auditWhere })).toBe(1);
+
+    expect(
+      (await request("/auth/me", "GET", undefined, other.accessToken)).status,
+    ).toBe(401);
+
+    expect((await request("/auth/refresh", "POST", otherCookie)).status).toBe(
+      401,
+    );
+
+    expect(
+      (await request("/auth/me", "GET", undefined, owner.accessToken)).status,
+    ).toBe(200);
   });
 });
