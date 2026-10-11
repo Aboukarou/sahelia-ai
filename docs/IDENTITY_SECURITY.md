@@ -11,10 +11,14 @@ Le socle couvre l’inscription, la connexion, le renouvellement des tokens, les
 - Les access tokens expirent après 15 minutes par défaut.
 - Le refresh token est transmis dans un cookie HttpOnly.
 - Seul son condensat SHA-256 est stocké en base.
-- Le renouvellement conserve l’identifiant et la date de création de la session, et actualise `lastUsedAt`.
+- Chaque nouveau refresh token contient un identifiant JWT aléatoire, y compris lorsque deux tokens sont émis dans la même seconde.
+- La rotation utilise une mise à jour conditionnelle atomique : elle vérifie l’identifiant de la session, son utilisateur, le condensat du token présenté, l’état actif de l’utilisateur et une session non révoquée et non expirée.
+- Un même refresh token ne peut être consommé avec succès qu’une seule fois. Deux demandes concurrentes utilisant ce token ne peuvent pas toutes deux réussir.
+- Le renouvellement conserve l’identifiant, la date de création et la date d’expiration de la session, et actualise `lastUsedAt`.
 - Le renouvellement refuse une session révoquée, expirée, appartenant à un autre utilisateur ou dont le condensat du token ne correspond pas.
 - L’authentification JWT vérifie en base la session et l’état actuel de l’utilisateur.
 - Un access token encore valide cryptographiquement est refusé si sa session est révoquée ou expirée.
+- Les permissions métier sont vérifiées côté serveur à partir des accès actuels.
 - Cinq connexions échouées verrouillent le compte pendant 15 minutes par défaut.
 - Les événements d’authentification et les révocations individuelles sont journalisés.
 - Les accès métier vérifient les permissions et l’état de l’entreprise côté serveur.
@@ -55,6 +59,24 @@ pnpm.cmd db:migrate:deploy
 ```
 
 L’inscription, la connexion et le renouvellement retournent un access token et un profil public. Le refresh token est transmis par le cookie HttpOnly.
+
+## Renouvellement des tokens
+
+### POST /api/auth/refresh
+
+La requête utilise le refresh token transmis par le cookie HttpOnly.
+
+Un renouvellement réussi retourne HTTP 200, un access token et un profil public, puis transmet un nouveau refresh token dans le cookie.
+
+La rotation conserve la session existante et son expiration en base. Elle actualise le condensat du refresh token, `lastUsedAt` et les métadonnées de la requête.
+
+L’ancien refresh token est ensuite refusé avec HTTP 401.
+
+Si deux demandes concurrentes présentent le même refresh token encore utilisable, une seule peut effectuer la rotation. Le scénario automatisé vérifie une réponse HTTP 200 et une réponse HTTP 401. La réponse refusée ne transmet aucun cookie.
+
+Si une révocation intervient après la lecture de la session et avant la mise à jour conditionnelle, le renouvellement est refusé sans modifier la session révoquée.
+
+Cette garantie concerne la rotation en base. Une révocation intervenue après une rotation réussie entraîne le refus des tokens lors des contrôles ultérieurs de la session.
 
 ## Membres de l’entreprise
 
@@ -134,21 +156,38 @@ Une page au-delà de la dernière peut retourner une liste vide. Le frontend ada
 
 ### Tests automatisés et CI
 
-Le dernier passage complet fourni des tests API contient 7 suites et 64 tests réussis, dont :
+Les derniers résultats locaux fournis sont les suivants :
+
+| Validation                        | Résultat                                                  |
+| --------------------------------- | --------------------------------------------------------- |
+| Contrôle complet `pnpm.cmd check` | Formatage, lint, types, tests unitaires et builds réussis |
+| Tests unitaires API               | 64 tests réussis dans 7 suites                            |
+| Tests HTTP avec PostgreSQL        | 17 tests réussis dans 2 suites                            |
+| Tests navigateur Playwright       | 15 tests réussis dans 4 fichiers                          |
+
+Les tests unitaires comprennent notamment :
 
 - 15 tests du service de consultation des membres
 - 16 tests de la stratégie JWT
 - 14 tests du service des sessions
 
-Le contrôle complet local `pnpm.cmd check` a réussi : formatage, lint, types, tests et builds.
+La CI GitHub #23 du commit `08474ea` a réussi le 10 octobre 2026 en 3 minutes et 23 secondes.
 
-La CI GitHub du commit `e92a6aa` a réussi le 4 octobre 2026 : migrations PostgreSQL, contrôle complet avec 64 tests unitaires, puis sept tests HTTP.
+Le workflow exécute :
 
-Le 6 octobre 2026, les vérifications TypeScript et le lint API ont réussi localement, suivis des 13 tests HTTP. La CI du commit `fee61ec` a également réussi, avec `pnpm check` puis les tests HTTP PostgreSQL.
+1. L’installation des dépendances avec le lockfile figé
+2. La génération du client Prisma
+3. L’application des migrations à la base PostgreSQL de test
+4. Le contrôle complet `pnpm check`
+5. Les tests HTTP avec PostgreSQL
+6. L’installation de Chromium et de ses dépendances système
+7. Les tests navigateur Playwright
 
-[Consulter la dernière exécution CI validée](https://github.com/Aboukarou/sahelia-ai/actions/runs/37437095377).
+En cas d’échec, le workflow conserve les diagnostics Playwright disponibles pendant sept jours.
 
-### Tests HTTP automatisés — extension validée le 6 octobre 2026
+Les tests HTTP et les tests navigateur utilisent des commandes dédiées. Ils ne sont pas inclus dans `pnpm.cmd check`.
+
+### Isolation et permissions HTTP — extension validée le 6 octobre 2026
 
 La suite `apps/api/test/tenant-isolation.e2e-spec.ts` a réussi lors de plusieurs exécutions locales et dans GitHub Actions. Elle utilise la vraie application Nest, ses contrôles de validation et d’authentification, ainsi qu’une base PostgreSQL dédiée.
 
@@ -172,15 +211,67 @@ Pour chacun des trois états désactivés, les tests vérifient le refus de `/ap
 
 Les mutations de rôle et de statut utilisent Prisma uniquement sur les données de test. Chaque scénario restaure les valeurs modifiées dans un bloc `finally`. Aucun endpoint ni mécanisme de gestion des membres n’est ajouté.
 
-La configuration exige `TEST_DATABASE_URL` ciblant la base locale `sahelia_ai_test`, schéma `public`. Les secrets JWT sont temporaires. La suite vérifie le nom de la base connectée avant les inscriptions et démarre Nest sur un port disponible.
+### Renouvellement HTTP — validation du 10 octobre 2026
 
-Le nettoyage est limité aux données des comptes créés pour cette exécution. Une interruption brutale peut laisser des données résiduelles. Aucune réinitialisation globale de la base n’est effectuée.
+La suite `apps/api/test/auth-refresh.e2e-spec.ts` ajoute quatre tests HTTP avec PostgreSQL :
 
-La commande dédiée est `pnpm.cmd --filter @sahelia/api test:e2e`. Elle est distincte de `pnpm.cmd check`. La procédure de création de la base, de configuration de l’URL et de migration est documentée dans le [README](../README.md#tests-http-avec-postgresql).
+1. Le renouvellement change le cookie, conserve la session et son expiration, puis refuse l’ancien refresh token.
+2. Deux demandes concurrentes utilisant le même refresh token produisent une réussite HTTP 200 et un refus HTTP 401. La réponse refusée ne transmet aucun cookie. Le token issu de la rotation réussie reste utilisable.
+3. Après déconnexion, les anciens et nouveaux refresh tokens ainsi que l’access token renouvelé sont refusés. Le condensat, `lastUsedAt` et la date de révocation restent inchangés.
+4. Une révocation intervenue après la lecture de la session et avant sa rotation fait échouer le renouvellement avec HTTP 401, sans transmettre de cookie ni modifier la session révoquée.
 
-Cette suite couvre les requêtes HTTP et PostgreSQL ; elle ne teste pas les interactions du frontend dans un navigateur.
+Le quatrième test contrôle l’ordre des opérations en suspendant temporairement une signature JWT. Les requêtes HTTP et les opérations PostgreSQL restent réelles.
 
-### Révocation d’une session
+Les deux suites HTTP totalisent 17 tests réussis : 13 tests d’isolation et de permissions, et quatre tests de renouvellement.
+
+### Environnement et exécution des tests HTTP
+
+La configuration exige `TEST_DATABASE_URL` ciblant la base locale `sahelia_ai_test`, schéma `public`. Les secrets JWT sont temporaires.
+
+Les suites vérifient le nom de la base connectée avant les inscriptions et démarrent Nest sur un port disponible.
+
+Le nettoyage est limité aux données des comptes créés pour l’exécution. Une interruption brutale peut laisser des données résiduelles. Aucune réinitialisation globale de la base n’est effectuée.
+
+La commande dédiée est :
+
+```powershell
+pnpm.cmd --filter @sahelia/api test:e2e
+```
+
+La procédure de création de la base, de configuration de l’URL et de migration est documentée dans le [README](../README.md#tests-http-avec-postgresql).
+
+Ces suites couvrent les requêtes HTTP et PostgreSQL. Les interactions du frontend sont vérifiées séparément avec Playwright.
+
+### Parcours navigateur automatisés
+
+Les 15 tests Playwright ont réussi localement. Ils couvrent cinq scénarios, chacun exécuté avec trois tailles de fenêtre : ordinateur, tablette et mobile.
+
+| Fichier                                    | Scénarios                                                                                                |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `apps/web/e2e/auth-navigation.spec.ts`     | Redirection d’un visiteur du dashboard vers la connexion ; navigation de la connexion vers l’inscription |
+| `apps/web/e2e/dashboard-connected.spec.ts` | Connexion du propriétaire, restauration du dashboard après rechargement et déconnexion                   |
+| `apps/web/e2e/register-browser.spec.ts`    | Validation du formulaire et inscription depuis le navigateur                                             |
+| `apps/web/e2e/session-revocation.spec.ts`  | Révocation d’une autre session tout en conservant la session courante                                    |
+
+Le parcours d’inscription vérifie notamment le message de confirmation de mot de passe incorrecte, puis l’inscription réussie, l’accès au dashboard, la restauration après rechargement et la déconnexion.
+
+Le parcours de révocation utilise deux contextes de navigateur indépendants. Il vérifie le retour à la connexion de la session révoquée après rechargement et le maintien de l’accès pour la session courante.
+
+Les tests utilisent Chromium. Les tailles de fenêtre ne constituent pas des essais sur appareils physiques ni une validation de Safari ou Firefox.
+
+Les serveurs de test utilisent le port 3100 pour le web et le port 5100 pour l’API. Le web utilise le répertoire de compilation `.next-e2e`.
+
+Les comptes créés pour les parcours navigateur disposent d’un nettoyage ciblé dans la base de test.
+
+La commande dédiée est :
+
+```powershell
+pnpm.cmd --filter @sahelia/web exec playwright test
+```
+
+Ces tests sont exécutés dans GitHub Actions après les tests HTTP.
+
+### Révocation manuelle d’une session
 
 Les vérifications manuelles ont confirmé :
 
@@ -194,7 +285,7 @@ Les vérifications manuelles ont confirmé :
 
 Les fenêtres du test doivent utiliser des sessions différentes. Deux onglets partageant le même cookie ne constituent pas deux sessions indépendantes.
 
-### Isolation entre deux comptes et entreprises — 3 octobre 2026
+### Isolation manuelle entre deux comptes et entreprises — 3 octobre 2026
 
 Les scénarios ont été exécutés manuellement avec PowerShell contre l’API locale et sa base PostgreSQL.
 
@@ -216,17 +307,17 @@ Les résultats observés sont les suivants :
 | Tentative de révocation de la session A avec le compte B   | HTTP 404 ; A pouvait encore consulter son profil et retrouver sa session courante                  |
 | Déconnexion finale de A et B avec leurs cookies respectifs | HTTP 204 pour chaque compte                                                                        |
 
-Les comptes et entreprises de test restent en base. Aucune suppression de données n’a été effectuée.
+Lors de cette vérification manuelle, les comptes et entreprises de test ont été conservés en base. Aucune suppression de données n’a été effectuée.
 
-Cette vérification couvre les scénarios exécutés avec deux propriétaires d’entreprises distinctes. Elle ne couvre pas tous les rôles, les memberships multiples, les entreprises désactivées ni les accès concurrents.
+Cette vérification manuelle couvrait deux propriétaires d’entreprises distinctes. Les tests automatisés ajoutés ensuite étendent la couverture aux permissions de membership et aux états désactivés.
 
 ## Vérifications restantes
 
 - Étendre les tests HTTP aux rôles globaux ADMIN et SUPER_ADMIN, aux memberships multiples et à la sélection explicite d’une entreprise
-- Automatiser les parcours du frontend dans un navigateur
-- Tester les renouvellements concurrents et leur interaction avec une révocation
+- Étendre les tests navigateur aux erreurs réseau, aux permissions et aux autres moteurs de navigateur
+- Étendre les scénarios concurrents aux déconnexions globales et aux changements d’état de l’utilisateur ou de ses accès
 - Vérifier le rollback réel de la transaction si l’écriture d’audit échoue
 - Valider les cookies, les origines autorisées et HTTPS en environnement de production
 - Compléter les contrôles d’accessibilité et les essais sur appareils réels
 
-Le socle n’est pas déclaré prêt pour la production sur la seule base des tests unitaires, des 13 tests HTTP et des vérifications manuelles actuelles.
+Le socle n’est pas déclaré prêt pour la production sur la seule base des 64 tests unitaires, des 17 tests HTTP, des 15 tests navigateur et des vérifications manuelles actuelles.
